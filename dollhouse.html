@@ -1,0 +1,785 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>3D Dollhouse — Contemporary Home</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #e8e3dc; overflow: hidden; font-family: 'Georgia', serif; }
+  canvas { display: block; }
+  #ui {
+    position: absolute; top: 24px; left: 28px;
+    color: #3a3028; pointer-events: none;
+  }
+  #ui h1 { font-size: 17px; font-weight: normal; letter-spacing: 0.12em; text-transform: uppercase; }
+  #ui p  { font-size: 10px; letter-spacing: 0.08em; opacity: 0.5; margin-top: 4px; text-transform: uppercase; }
+  #legend {
+    position: absolute; bottom: 24px; right: 28px;
+    color: #3a3028; font-size: 10px; letter-spacing: 0.06em;
+    text-transform: uppercase; opacity: 0.6; line-height: 1.9;
+    pointer-events: none;
+  }
+</style>
+</head>
+<body>
+<div id="ui">
+  <h1>Contemporary Home · Isometric View</h1>
+  <p>Drag to orbit &nbsp;·&nbsp; Scroll to zoom &nbsp;·&nbsp; Right-drag to pan</p>
+</div>
+<div id="legend">
+  <div>Guest Bedroom / Office</div>
+  <div>Master Bedroom · Master Bath · Walk-In Closet</div>
+  <div>Great Room · Kitchen · Guest Bath</div>
+  <div>Garage · Covered Porch · Patio</div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ── Renderer ──────────────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.15;
+document.body.appendChild(renderer.domElement);
+
+// ── Scene ─────────────────────────────────────────────────────────────────────
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xe8e3dc);
+scene.fog = new THREE.Fog(0xe8e3dc, 140, 220);
+
+// ── Orthographic isometric camera ────────────────────────────────────────────
+const FS = 58;
+const AR = window.innerWidth / window.innerHeight;
+const camera = new THREE.OrthographicCamera(-FS*AR, FS*AR, FS, -FS, 0.1, 600);
+const TARGET = new THREE.Vector3(14, 1.5, 23);
+camera.position.set(TARGET.x + 85, 85, TARGET.z + 85);
+camera.lookAt(TARGET);
+
+// ── Controls ──────────────────────────────────────────────────────────────────
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.copy(TARGET);
+controls.enableDamping = true;
+controls.dampingFactor = 0.06;
+controls.screenSpacePanning = false;
+
+// ── Lighting ──────────────────────────────────────────────────────────────────
+// Warm morning sun from NW
+const sun = new THREE.DirectionalLight(0xfff3d8, 2.8);
+sun.position.set(-35, 60, -25);
+sun.castShadow = true;
+const sc = sun.shadow.camera;
+sc.left = -55; sc.right = 55; sc.top = 60; sc.bottom = -60;
+sc.near = 1; sc.far = 220;
+sun.shadow.mapSize.setScalar(3072);
+sun.shadow.bias = -0.0005;
+sun.shadow.normalBias = 0.02;
+scene.add(sun);
+
+// Cool fill from SE
+const fill = new THREE.DirectionalLight(0xdaebff, 0.7);
+fill.position.set(50, 30, 50);
+scene.add(fill);
+
+// Warm ambient
+scene.add(new THREE.AmbientLight(0xfff8f0, 0.9));
+
+// Interior ceiling lights (point lights inside rooms)
+const addPL = (x, y, z, c = 0xfff4e0, i = 1.0, r = 18) => {
+  const l = new THREE.PointLight(c, i, r); l.position.set(x, y, z); scene.add(l);
+};
+addPL(6.5, 7, 6,    0xfff4e0, 1.1); // Guest bedroom
+addPL(21.5, 7, 8,   0xfff4e0, 1.2); // Master bedroom
+addPL(4, 7, 16,     0xfff0d8, 0.9); // Guest bath
+addPL(11, 7, 16,    0xfff4e0, 0.9); // Kitchen
+addPL(7, 7, 33,     0xfff4e0, 1.4, 22); // Great room
+addPL(21, 7, 19,    0xfff4e0, 0.9); // Master bath
+addPL(19, 7, 26,    0xfff4e0, 0.8); // Walk-in closet
+addPL(21, 7, 37,    0xfff8f0, 0.6); // Garage
+
+// ── Materials ─────────────────────────────────────────────────────────────────
+
+// Procedural white-oak floor texture
+function makeWoodTex(w = 512, h = 512) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const ctx = c.getContext('2d');
+  const base = '#d4a76a';
+  ctx.fillStyle = base; ctx.fillRect(0, 0, w, h);
+  // planks
+  const plankW = 40;
+  for (let x = 0; x < w; x += plankW) {
+    ctx.strokeStyle = 'rgba(0,0,0,0.06)'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+    // grain lines
+    const grainCount = 6 + Math.floor(Math.random() * 4);
+    for (let g = 0; g < grainCount; g++) {
+      ctx.strokeStyle = `rgba(${Math.random()>0.5?160:120},80,30,0.07)`;
+      ctx.lineWidth = 0.5 + Math.random();
+      const sx = x + Math.random() * plankW;
+      ctx.beginPath(); ctx.moveTo(sx, 0); ctx.lineTo(sx + (Math.random()-0.5)*8, h); ctx.stroke();
+    }
+  }
+  // plank end joints
+  for (let x = 0; x < w; x += plankW) {
+    for (let y = 0; y < h; y += 80 + Math.floor(Math.random()*60)) {
+      ctx.strokeStyle = 'rgba(0,0,0,0.08)'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + plankW, y); ctx.stroke();
+    }
+  }
+  return new THREE.CanvasTexture(c);
+}
+
+function makeMarbleTex(w = 256, h = 256) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#f2eeea'; ctx.fillRect(0, 0, w, h);
+  for (let i = 0; i < 12; i++) {
+    const grd = ctx.createLinearGradient(
+      Math.random()*w, Math.random()*h, Math.random()*w, Math.random()*h
+    );
+    grd.addColorStop(0, `rgba(180,170,160,${0.03+Math.random()*0.05})`);
+    grd.addColorStop(0.5, 'rgba(220,210,200,0)');
+    grd.addColorStop(1, `rgba(140,130,120,${0.02+Math.random()*0.04})`);
+    ctx.strokeStyle = grd; ctx.lineWidth = 0.5 + Math.random() * 1.5;
+    ctx.beginPath();
+    ctx.moveTo(Math.random()*w, Math.random()*h);
+    ctx.bezierCurveTo(
+      Math.random()*w, Math.random()*h,
+      Math.random()*w, Math.random()*h,
+      Math.random()*w, Math.random()*h
+    );
+    ctx.stroke();
+  }
+  return new THREE.CanvasTexture(c);
+}
+
+function makeTileTex(w = 256, h = 256) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#e6e0d6'; ctx.fillRect(0, 0, w, h);
+  const tileSize = 32;
+  ctx.strokeStyle = 'rgba(160,148,136,0.4)'; ctx.lineWidth = 1;
+  for (let x = 0; x <= w; x += tileSize) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,h); ctx.stroke(); }
+  for (let y = 0; y <= h; y += tileSize) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke(); }
+  return new THREE.CanvasTexture(c);
+}
+
+const woodTex   = makeWoodTex();  woodTex.wrapS = woodTex.wrapT = THREE.RepeatWrapping;
+const marbleTex = makeMarbleTex(); marbleTex.wrapS = marbleTex.wrapT = THREE.RepeatWrapping;
+const tileTex   = makeTileTex();   tileTex.wrapS = tileTex.wrapT = THREE.RepeatWrapping;
+woodTex.repeat.set(4, 6); marbleTex.repeat.set(2, 2); tileTex.repeat.set(3, 3);
+
+const M = {
+  floor:    new THREE.MeshStandardMaterial({ map: woodTex, roughness: 0.75, metalness: 0.0 }),
+  tile:     new THREE.MeshStandardMaterial({ map: tileTex, roughness: 0.35, metalness: 0.05 }),
+  concrete: new THREE.MeshStandardMaterial({ color: 0xc4bdb2, roughness: 0.92 }),
+  pavers:   new THREE.MeshStandardMaterial({ color: 0xb4ada2, roughness: 0.88 }),
+  wall:     new THREE.MeshStandardMaterial({ color: 0xf5f2ed, roughness: 0.88 }),
+  wallExt:  new THREE.MeshStandardMaterial({ color: 0xeae4da, roughness: 0.88 }),
+  wallDark: new THREE.MeshStandardMaterial({ color: 0xddd7cc, roughness: 0.88 }),
+  cabinet:  new THREE.MeshStandardMaterial({ color: 0xf0ede6, roughness: 0.28, metalness: 0.04 }),
+  marble:   new THREE.MeshStandardMaterial({ map: marbleTex, roughness: 0.18, metalness: 0.08 }),
+  sofa:     new THREE.MeshStandardMaterial({ color: 0x8a7f76, roughness: 0.95 }),
+  sofaAccent: new THREE.MeshStandardMaterial({ color: 0x6a6058, roughness: 0.95 }),
+  linen:    new THREE.MeshStandardMaterial({ color: 0xf2f0ec, roughness: 0.92 }),
+  linenAcc: new THREE.MeshStandardMaterial({ color: 0xd8d2c8, roughness: 0.92 }),
+  wood:     new THREE.MeshStandardMaterial({ color: 0x8b6340, roughness: 0.70 }),
+  woodDark: new THREE.MeshStandardMaterial({ color: 0x6a4a28, roughness: 0.70 }),
+  metal:    new THREE.MeshStandardMaterial({ color: 0x3c3028, roughness: 0.40, metalness: 0.82 }),
+  chrome:   new THREE.MeshStandardMaterial({ color: 0xd8d0c8, roughness: 0.10, metalness: 0.95 }),
+  rug:      new THREE.MeshStandardMaterial({ color: 0x38404e, roughness: 0.98 }),
+  rugWarm:  new THREE.MeshStandardMaterial({ color: 0x5a4438, roughness: 0.98 }),
+  glass:    new THREE.MeshStandardMaterial({ color: 0xb8d8e8, roughness: 0.05, metalness: 0.1, transparent: true, opacity: 0.35 }),
+  glassDoor: new THREE.MeshStandardMaterial({ color: 0xc8d8e0, roughness: 0.08, transparent: true, opacity: 0.5 }),
+  trim:     new THREE.MeshStandardMaterial({ color: 0xd8d0c4, roughness: 0.55 }),
+  appliance: new THREE.MeshStandardMaterial({ color: 0xe0dcd6, roughness: 0.18, metalness: 0.55 }),
+  grass:    new THREE.MeshStandardMaterial({ color: 0x6a8c52, roughness: 0.95 }),
+  carBody:  new THREE.MeshStandardMaterial({ color: 0x586070, roughness: 0.25, metalness: 0.65 }),
+  door:     new THREE.MeshStandardMaterial({ color: 0x2c2820, roughness: 0.45, metalness: 0.15 }),
+  garDoor:  new THREE.MeshStandardMaterial({ color: 0xddd5c8, roughness: 0.40, metalness: 0.12 }),
+};
+
+// ── Box helper ─────────────────────────────────────────────────────────────────
+// x,y,z = minimum corner; w,h,d = dimensions
+function box(x, y, z, w, h, d, mat, cast = true, receive = true) {
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+  mesh.position.set(x + w/2, y + h/2, z + d/2);
+  mesh.castShadow = cast; mesh.receiveShadow = receive;
+  scene.add(mesh); return mesh;
+}
+
+// Cylinder helper (center-base at x,y,z)
+function cyl(x, y, z, rt, rb, h, segs, mat) {
+  const mesh = new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, h, segs), mat);
+  mesh.position.set(x, y + h/2, z);
+  mesh.castShadow = true; mesh.receiveShadow = true;
+  scene.add(mesh); return mesh;
+}
+
+// Slab (floor panel, sits on y=0 going down to y=-t)
+function slab(x, z, w, d, mat, t = 0.18) {
+  return box(x, -t, z, w, t, d, mat, false, true);
+}
+
+// Wall segment
+function wall(x, z, w, h, d, mat = M.wall) {
+  return box(x, 0, z, w, h, d, mat);
+}
+
+// ── LAYOUT CONSTANTS ──────────────────────────────────────────────────────────
+const WH = 9.0;   // wall height (feet/units)
+const WT = 0.28;  // wall thickness
+const HALL = 1.4; // hallway width between left/right halves
+
+// Key x-coordinates
+const X0 = 0;       // west exterior
+const X_GBE = 13.5; // guest bedroom east
+const X_HL = 13.5;  // hallway west
+const X_HR = 15.1;  // hallway east / master section west
+const X28 = 28.0;   // east exterior
+
+// Key z-coordinates (north=0, south=47)
+const Z0 = 0;        // north exterior
+const Z_GBS = 12.0;  // guest bedroom south
+const Z_MBS = 16.5;  // master bedroom south
+const Z_MTS = 23.0;  // master bath south
+const Z_WCS = 30.0;  // walk-in closet south
+const Z_GRS = 25.0;  // great room starts
+const Z47 = 47.0;    // south exterior
+
+// ── GROUND PLANE ─────────────────────────────────────────────────────────────
+const gndGeo = new THREE.PlaneGeometry(120, 120);
+const gnd = new THREE.Mesh(gndGeo, M.grass);
+gnd.rotation.x = -Math.PI/2; gnd.position.set(14, -0.32, 23);
+gnd.receiveShadow = true; scene.add(gnd);
+
+// ── FLOORS ────────────────────────────────────────────────────────────────────
+// Guest Bedroom/Office
+slab(X0, Z0, X_GBE, Z_GBS, M.floor);
+// Master Bedroom
+slab(X_HR, Z0, X28 - X_HR, Z_MBS, M.floor);
+// Guest Bath
+slab(X0, Z_GBS, 8.5, Z_GRS - Z_GBS, M.tile);
+// Kitchen
+slab(8.5, Z_GBS, X_GBE - 8.5, Z_GRS - Z_GBS, M.floor);
+// Central hallway strip
+slab(X_GBE, Z0, HALL, Z_WCS, M.tile);
+// Master Bath
+slab(X_HR, Z_MBS, X28 - X_HR, Z_MTS - Z_MBS, M.tile);
+// Walk-In Closet
+slab(X_HR, Z_MTS, 9.5, Z_WCS - Z_MTS, M.floor);
+// Great Room
+slab(X0, Z_GRS, 15.0, Z47 - Z_GRS, M.floor);
+// Garage
+slab(15.0, Z_WCS, 13.0, Z47 - Z_WCS, M.concrete);
+// Patio (north exterior)
+slab(X_HR, -7, X28 - X_HR, 7, M.pavers, 0.12);
+// Covered Porch (south exterior)
+slab(X0, Z47, 15.0, 6, M.pavers, 0.12);
+
+// ── EXTERIOR WALLS ────────────────────────────────────────────────────────────
+// North wall (two panels with patio gap on master side)
+wall(X0, -WT, X_GBE + HALL, WH, WT, M.wallExt);           // guest+hall north
+wall(X_HR, -WT, X28 - X_HR, WH, WT, M.wallExt);           // master north
+// South wall
+wall(X0, Z47, X28, WH, WT, M.wallExt);
+// West wall
+wall(-WT, Z0, WT, WH, Z47, M.wallExt);
+// East wall
+wall(X28, Z0, WT, WH, Z47, M.wallExt);
+
+// ── INTERIOR WALLS ────────────────────────────────────────────────────────────
+// Hallway west wall (east edge of guest side)
+wall(X_GBE, Z0, WT, WH, Z_WCS, M.wall);
+// Hallway east wall (west edge of master side)
+wall(X_HR, Z0, WT, WH, Z_WCS, M.wall);
+
+// Guest bedroom south wall
+wall(X0, Z_GBS, X_GBE + WT, WH, WT, M.wall);
+// Master bedroom south wall
+wall(X_HR, Z_MBS, X28 - X_HR, WH, WT, M.wall);
+// Guest bath east wall (separates bath from kitchen)
+wall(8.5, Z_GBS, WT, WH, Z_GRS - Z_GBS, M.wall);
+// Kitchen / great room south wall
+wall(X0, Z_GRS, 15.0, WH, WT, M.wall);
+// Master bath south wall
+wall(X_HR, Z_MTS, X28 - X_HR, WH, WT, M.wall);
+// Walk-in closet east wall (west edge of garage, partial)
+wall(X_HR + 9.5, Z_MTS, WT, WH, Z_WCS - Z_MTS, M.wall);
+// Walk-in closet south wall / garage north partial
+wall(X_HR, Z_WCS, 9.5 + WT, WH, WT, M.wall);
+// Garage-closet north wall (east portion, full height)
+wall(X_HR + 9.5, Z_WCS, X28 - X_HR - 9.5, WH, WT, M.wallExt);
+
+// ── WALL TOP TRIM CAPS (thin accent strip) ────────────────────────────────────
+function cap(x, z, w, d, mat = M.trim) {
+  return box(x, WH, z, w, 0.22, d, mat, false, false);
+}
+cap(-WT, -WT, X28 + 2*WT, WT + 0.22); // north
+cap(-WT, Z47, X28 + 2*WT, WT + 0.22); // south
+cap(-WT, -WT, WT + 0.22, Z47 + 2*WT); // west
+cap(X28, -WT, WT + 0.22, Z47 + 2*WT); // east
+
+// ── WINDOW APERTURES (glass panels) ──────────────────────────────────────────
+// Guest bedroom north window
+box(2, 2.2, -WT, 4.5, 3.2, WT + 0.06, M.glass);
+// Master bedroom north windows
+box(16, 2.2, -WT, 4, 3.2, WT + 0.06, M.glass);
+box(22, 2.2, -WT, 4, 3.2, WT + 0.06, M.glass);
+// Great room west windows
+box(-WT, 2.0, 26, WT + 0.06, 4.5, 9, M.glass);
+// Great room south slider / door
+box(2, 0, Z47, 6, 7, WT + 0.06, M.glassDoor);
+// Garage door
+box(15.5, 0, Z47, 11.5, 7.5, WT + 0.06, M.garDoor);
+// Garage door panel lines
+for (let i = 1; i < 5; i++) { box(15.5, i*1.8, Z47, 11.5, 0.06, WT + 0.08, M.metal); }
+// Front door (on south wall, great room side)
+box(8.5, 0, Z47, 3, 7.5, WT + 0.06, M.door);
+
+// ── GREAT ROOM ────────────────────────────────────────────────────────────────
+const GRX = 0, GRZ = Z_GRS;
+
+// Area rug
+box(GRX + 0.8, 0.01, GRZ + 0.8, 12.5, 0.06, 13, M.rug);
+
+// Main sectional sofa (L-shape facing east/hallway)
+// Long section (south-facing back, seats face north-east)
+box(GRX + 1.2, 0,    GRZ + 3.0, 9.5, 0.45, 3.0, M.sofa);    // seat
+box(GRX + 1.2, 0.45, GRZ + 5.6, 9.5, 0.42, 0.35, M.sofa);   // back
+box(GRX + 1.2, 0,    GRZ + 5.6, 9.5, 0.95, 0.35, M.sofaAccent); // back panel
+// Short section (east-facing back)
+box(GRX + 1.2, 0,    GRZ + 3.0, 3.0, 0.45, 3.0, M.sofa);    // returns
+box(GRX + 1.0, 0,    GRZ + 3.0, 0.35, 0.95, 3.0, M.sofaAccent); // west arm
+// Cushion details
+for (let i = 0; i < 3; i++) {
+  box(GRX + 1.4 + i*3.1, 0.45, GRZ + 3.1, 2.8, 0.38, 2.6, M.sofa);
+}
+// Sofa legs
+[[1.4,3.1],[10.3,3.1],[1.4,5.4],[10.3,5.4]].forEach(([lx,lz]) =>
+  box(GRX+lx, 0, GRZ+lz, 0.18, 0.22, 0.18, M.metal)
+);
+
+// Coffee table
+box(GRX + 3.5, 0.28, GRZ + 0.8, 4.5, 0.08, 2.0, M.marble);
+box(GRX + 3.7, 0,    GRZ + 0.9, 0.12, 0.28, 0.12, M.metal);
+box(GRX + 7.8, 0,    GRZ + 0.9, 0.12, 0.28, 0.12, M.metal);
+box(GRX + 3.7, 0,    GRZ + 2.6, 0.12, 0.28, 0.12, M.metal);
+box(GRX + 7.8, 0,    GRZ + 2.6, 0.12, 0.28, 0.12, M.metal);
+
+// Media unit (against west wall)
+box(GRX + 0.3, 0,    GRZ + 7.5, 5.5, 0.55, 1.6, M.woodDark);
+box(GRX + 0.3, 0.55, GRZ + 7.5, 5.5, 0.05, 1.6, M.marble);
+// TV
+box(GRX + 0.3, 0.6,  GRZ + 7.8, 5, 2.8, 0.09, M.metal);
+// TV stand decorative objects
+box(GRX + 0.5, 0.55, GRZ + 8.5, 0.8, 1.2, 0.8, new THREE.MeshStandardMaterial({color:0x8a6a4a, roughness:0.7}));
+
+// Side table
+box(GRX + 10.8, 0,  GRZ + 3.0, 1.1, 0.6, 1.1, M.wood);
+// Floor lamp
+box(GRX + 11.5, 0,  GRZ + 1.0, 0.12, 6.0, 0.12, M.metal);
+cyl(GRX + 11.5, 5.5, GRZ + 1.0, 0.5, 0.35, 0.6, 16,
+  new THREE.MeshStandardMaterial({color:0xfff8e8, roughness:0.6, transparent:true, opacity:0.75}));
+
+// Wall art
+box(GRX + 0.08, 2.8, GRZ + 11.5, 0.06, 2.8, 3.5,
+  new THREE.MeshStandardMaterial({color:0xd4b89a, roughness:0.65}));
+box(GRX + 0.08, 3.2, GRZ + 15.5, 0.06, 2.2, 2.2,
+  new THREE.MeshStandardMaterial({color:0x7090a8, roughness:0.65}));
+
+// Indoor plant (great room corner)
+cyl(GRX + 0.9, 0, GRZ + 15.5, 0.45, 0.35, 0.65, 12,
+  new THREE.MeshStandardMaterial({color:0x7a5030, roughness:0.88}));
+const leafGeo = new THREE.SphereGeometry(0.9, 9, 7);
+leafGeo.scale(1, 1.4, 1);
+const leaf = new THREE.Mesh(leafGeo, M.grass);
+leaf.position.set(GRX+0.9, 1.7, GRZ+15.5); leaf.castShadow=true; scene.add(leaf);
+
+// ── DINING AREA (between kitchen and great room) ──────────────────────────────
+const DZ = Z_GRS - 0.5;
+// Dining table
+box(1.0, 0,    DZ - 4.8, 6.0, 0.88, 3.2, M.wood);
+box(1.2, 0.88, DZ - 4.6, 5.6, 0.07, 2.8, M.marble);
+// Table legs
+[[1.3, DZ-4.7],[6.5, DZ-4.7],[1.3, DZ-1.7],[6.5, DZ-1.7]].forEach(([lx,lz]) =>
+  box(lx, 0, lz, 0.14, 0.88, 0.14, M.metal)
+);
+// Dining chairs (6)
+const chairPositions = [
+  [0.5, DZ-4.6, 0], [0.5, DZ-3.4, 0], [0.5, DZ-2.2, 0],
+  [7.3, DZ-4.6, Math.PI], [7.3, DZ-3.4, Math.PI], [7.3, DZ-2.2, Math.PI],
+];
+chairPositions.forEach(([cx, cz, ry]) => {
+  // Seat
+  box(cx - 0.5, 0.44, cz - 0.5, 1.0, 0.08, 1.0, M.cabinet);
+  // Legs
+  [[cx-0.42, cz-0.42],[cx+0.42, cz-0.42],[cx-0.42, cz+0.42],[cx+0.42, cz+0.42]].forEach(([lx2,lz2]) =>
+    box(lx2-0.04, 0, lz2-0.04, 0.08, 0.44, 0.08, M.metal)
+  );
+  // Back
+  box(cx - 0.45, 0.52, cz + (ry === 0 ? 0.46 : -0.54), 0.9, 1.0, 0.08, M.cabinet);
+});
+// Pendant light over dining (thin rod + shade)
+box(3.8, WH - 0.5, DZ - 3.6, 0.08, 2.5, 0.08, M.metal);
+cyl(3.8, WH - 3.2, DZ - 3.6, 0.55, 0.45, 0.4, 16,
+  new THREE.MeshStandardMaterial({color:0x2a2420, roughness:0.5, metalness:0.6}));
+
+// ── KITCHEN ───────────────────────────────────────────────────────────────────
+const KX = 8.5, KZ = Z_GBS;
+const KW = X_GBE - KX, KD = Z_GRS - KZ;
+
+// Lower base cabinets
+// North counter
+box(KX, 0, KZ + 0.1, KW, 0.9, 1.1, M.cabinet);
+box(KX, 0.9, KZ + 0.1, KW, 0.06, 1.1, M.marble);
+// South counter
+box(KX, 0, KZ + KD - 1.2, KW, 0.9, 1.2, M.cabinet);
+box(KX, 0.9, KZ + KD - 1.2, KW, 0.06, 1.2, M.marble);
+// East wall cabinet strip (against hallway wall)
+box(KX + KW - 1.1, 0, KZ + 1.2, 1.1, 0.9, KD - 2.5, M.cabinet);
+box(KX + KW - 1.1, 0.9, KZ + 1.2, 1.1, 0.06, KD - 2.5, M.marble);
+
+// Upper cabinets (north wall)
+box(KX, 4.2, KZ + 0.05, KW, 2.8, 0.85, M.cabinet);
+// Upper cabinets (east strip)
+box(KX + KW - 0.85, 4.2, KZ + 1.2, 0.85, 2.8, KD - 3.0, M.cabinet);
+
+// Cooktop / range
+box(KX + 0.3, 0.9, KZ + 0.1, 2.2, 0.06, 1.1, M.appliance);
+for (let bx = 0; bx < 2; bx++) for (let bz = 0; bz < 2; bz++) {
+  cyl(KX + 0.8 + bx*1.0, 0.97, KZ + 0.4 + bz*0.55, 0.22, 0.22, 0.04, 20, M.metal);
+}
+// Range hood
+box(KX + 0.2, 5.5, KZ + 0.08, 2.4, 1.2, 0.95, M.appliance);
+
+// Refrigerator (north-east corner)
+box(KX + KW - 1.85, 0, KZ + 0.08, 1.8, 6.8, 1.5, M.appliance);
+// Fridge handle
+box(KX + KW - 1.0, 3.0, KZ + 1.62, 0.06, 1.2, 0.06, M.chrome);
+
+// Kitchen sink (south counter)
+box(KX + 0.7, 0.84, KZ + KD - 1.1, 2.0, 0.14, 0.9, M.chrome);
+box(KX + 0.9, 0.84, KZ + KD - 1.05, 1.6, 0.18, 0.8,
+  new THREE.MeshStandardMaterial({color:0xd4cfc8, roughness:0.15, metalness:0.5}));
+// Faucet
+box(KX + 1.8, 0.98, KZ + KD - 0.95, 0.06, 0.55, 0.06, M.chrome);
+box(KX + 1.76, 1.48, KZ + KD - 1.08, 0.14, 0.06, 0.28, M.chrome);
+
+// Small kitchen island / peninsula
+box(KX + 0.2, 0, KZ + 3.5, 2.2, 0.9, 3.5, M.cabinet);
+box(KX + 0.1, 0.9, KZ + 3.4, 2.4, 0.08, 3.7, M.marble);
+// Bar stool (1 stool)
+box(KX + 1.2, 0, KZ + 7.5, 0.5, 1.1, 0.5, M.metal);
+box(KX + 0.95, 1.1, KZ + 7.25, 1.0, 0.08, 1.0, M.cabinet);
+
+// ── GUEST BATH ────────────────────────────────────────────────────────────────
+const GBX = X0, GBZ = Z_GBS;
+
+// Vanity (north wall)
+box(GBX + 0.35, 0, GBZ + 0.3, 3.2, 0.88, 1.2, M.cabinet);
+box(GBX + 0.35, 0.88, GBZ + 0.3, 3.2, 0.06, 1.2, M.marble);
+// Sink basin
+box(GBX + 0.55, 0.88, GBZ + 0.45, 1.8, 0.14, 0.9,
+  new THREE.MeshStandardMaterial({color:0xf4f0ec, roughness:0.12}));
+// Mirror
+box(GBX + 0.3, 0.95, GBZ + 0.12, 3.3, 2.8, 0.06, M.glass);
+// Toilet
+box(GBX + 4.0, 0, GBZ + 0.4, 1.6, 0.42, 2.0,
+  new THREE.MeshStandardMaterial({color:0xf5f2ee, roughness:0.22}));
+box(GBX + 4.0, 0.42, GBZ + 0.4, 1.6, 0.14, 2.0,
+  new THREE.MeshStandardMaterial({color:0xf5f2ee, roughness:0.22}));
+box(GBX + 4.0, 0.56, GBZ + 0.38, 1.6, 0.62, 0.7,
+  new THREE.MeshStandardMaterial({color:0xf5f2ee, roughness:0.22}));
+// Bathtub (west wall)
+box(GBX + 0.35, 0, GBZ + 4.5, 3.5, 0.6, 3.6,
+  new THREE.MeshStandardMaterial({color:0xece8e2, roughness:0.14, metalness:0.04}));
+box(GBX + 0.5, 0.45, GBZ + 4.65, 3.2, 0.22, 3.3,
+  new THREE.MeshStandardMaterial({color:0xf8f6f2, roughness:0.08}));
+// Towel bar
+box(GBX + 5.5, 3.0, GBZ + 0.25, 1.4, 0.05, 0.05, M.chrome);
+
+// ── GUEST BEDROOM / OFFICE ────────────────────────────────────────────────────
+const GBedX = X0, GBedZ = Z0;
+
+// Area rug
+box(GBedX + 0.6, 0.01, GBedZ + 0.5, 11.5, 0.05, 9.5, M.rugWarm);
+
+// Desk (against east / hallway wall)
+box(GBedX + 8.5, 0, GBedZ + 1.0, 4.5, 0.76, 1.8, M.wood);
+box(GBedX + 8.5, 0.76, GBedZ + 1.0, 4.5, 0.05, 1.8, M.marble);
+// Desk legs
+[[8.6,1.1],[12.8,1.1],[8.6,2.6],[12.8,2.6]].forEach(([lx,lz]) =>
+  box(GBedX+lx, 0, GBedZ+lz, 0.1, 0.76, 0.1, M.metal)
+);
+// Monitor
+box(GBedX + 9.8, 0.81, GBedZ + 1.15, 2.2, 1.4, 0.07, M.metal);
+box(GBedX + 10.7, 0.76, GBedZ + 1.2, 0.5, 0.07, 0.35, M.metal);
+// Desk chair
+box(GBedX + 10.0, 0, GBedZ + 3.2, 1.2, 0.46, 1.2, M.sofa);
+box(GBedX + 9.95, 0.46, GBedZ + 4.2, 1.3, 1.1, 0.12, M.sofa);
+cyl(GBedX + 10.6, 0, GBedZ + 3.8, 0.06, 0.06, 0.5, 8, M.metal);
+cyl(GBedX + 10.6, 0, GBedZ + 3.8, 0.4, 0.4, 0.04, 20, M.metal);
+
+// Day bed (north wall, doubles as guest bed)
+box(GBedX + 0.5, 0, GBedZ + 0.4, 5.5, 0.38, 2.8, M.woodDark);  // frame
+box(GBedX + 0.5, 0.38, GBedZ + 0.4, 5.5, 0.26, 2.8, M.linen);  // mattress
+box(GBedX + 0.5, 0.64, GBedZ + 0.4, 5.5, 0.38, 0.65, M.linenAcc); // pillows
+box(GBedX + 0.45, 0, GBedZ + 0.38, 0.15, 1.5, 2.86, M.woodDark); // headboard
+// Throw
+box(GBedX + 2.0, 0.64, GBedZ + 2.5, 2.5, 0.12, 0.7, M.sofaAccent);
+
+// Bookshelf (west wall)
+box(GBedX + 0.4, 0, GBedZ + 4.0, 1.0, 6.0, 5.5, M.cabinet);
+// Book rows (decorative)
+const bookColors = [0x8b3030, 0x305878, 0x386038, 0x7a6028, 0x5c3878, 0x306860];
+for (let r = 0; r < 4; r++) for (let b = 0; b < 3; b++) {
+  box(GBedX + 0.45, 0.6 + r*1.35, GBedZ + 4.1 + b*1.7, 0.9,
+      0.9 + Math.random()*0.3, 0.55 + Math.random()*0.4,
+      new THREE.MeshStandardMaterial({color: bookColors[(r*3+b)%6], roughness:0.8}));
+}
+
+// Side table
+box(GBedX + 6.2, 0, GBedZ + 0.5, 1.1, 0.62, 1.1, M.wood);
+// Table lamp
+box(GBedX + 6.5, 0.62, GBedZ + 0.85, 0.1, 1.2, 0.1, M.chrome);
+cyl(GBedX + 6.55, 1.6, GBedZ + 0.9, 0.38, 0.28, 0.45, 16,
+  new THREE.MeshStandardMaterial({color:0xfff8e0, roughness:0.7, transparent:true, opacity:0.8}));
+
+// ── MASTER BEDROOM ────────────────────────────────────────────────────────────
+const MBX = X_HR, MBZ = Z0;
+const MBW = X28 - X_HR;
+
+// Large area rug
+box(MBX + 0.5, 0.01, MBZ + 1.5, 11.5, 0.06, 13.0, M.rug);
+
+// King bed (centered)
+box(MBX + 2.5, 0, MBZ + 2.5, 8.0, 0.42, 8.5, M.woodDark);  // base
+box(MBX + 2.5, 0.42, MBZ + 2.5, 8.0, 0.34, 8.5, M.linen);  // mattress
+box(MBX + 2.5, 0.76, MBZ + 2.5, 8.0, 0.5, 0.85, M.linen);  // pillows row
+box(MBX + 2.5, 0.42, MBZ + 10.6, 8.0, 0.55, 0.55, M.linenAcc); // foot
+box(MBX + 2.4, 0, MBZ + 2.4, 0.16, 2.2, 8.7, M.woodDark);  // headboard
+// Pillow details
+for (let i = 0; i < 3; i++) {
+  box(MBX + 2.8 + i*2.6, 0.76, MBZ + 2.6, 2.2, 0.44, 0.72, M.linen);
+}
+// Duvet fold
+box(MBX + 2.5, 0.76, MBZ + 5.5, 8.0, 0.38, 5.0, M.linenAcc);
+
+// Nightstands
+box(MBX + 1.2, 0, MBZ + 5.5, 1.1, 0.58, 1.8, M.wood);
+box(MBX + 11.5, 0, MBZ + 5.5, 1.1, 0.58, 1.8, M.wood);
+// Table lamps on nightstands
+[MBX + 1.6, MBX + 11.9].forEach(lx => {
+  box(lx - 0.05, 0.58, MBZ + 6.1, 0.1, 0.9, 0.1, M.chrome);
+  cyl(lx, 1.32, MBZ + 6.15, 0.35, 0.26, 0.38, 14,
+    new THREE.MeshStandardMaterial({color:0xfff8e0, roughness:0.7, transparent:true, opacity:0.8}));
+});
+
+// Dresser (against east wall)
+box(MBX + MBW - 1.8, 0, MBZ + 0.5, 2.4, 2.6, 1.5, M.cabinet);
+box(MBX + MBW - 1.82, 2.6, MBZ + 0.48, 2.44, 0.06, 1.54, M.marble);
+// Dresser handles
+for (let i = 0; i < 3; i++) for (let j = 0; j < 2; j++) {
+  cyl(MBX + MBW - 1.5 + j*1.2, 0.55 + i*0.75, MBZ + 1.98, 0.05, 0.05, 0.4, 8, M.chrome);
+}
+// Mirror above dresser
+box(MBX + MBW - 1.7, 2.7, MBZ + 0.42, 2.2, 3.0, 0.06, M.glass);
+
+// Accent chair (south-east corner)
+box(MBX + MBW - 3.8, 0, MBZ + 13.5, 2.2, 0.9, 2.2, M.sofaAccent);
+box(MBX + MBW - 3.85, 0.9, MBZ + 15.4, 2.3, 1.3, 0.28, M.sofaAccent);
+// Side table next to chair
+box(MBX + MBW - 4.5, 0, MBZ + 13.8, 1.0, 0.55, 1.0, M.wood);
+
+// ── MASTER BATH ───────────────────────────────────────────────────────────────
+const MBaX = X_HR, MBaZ = Z_MBS;
+const MBaW = X28 - X_HR, MBaD = Z_MTS - Z_MBS;
+
+// Double vanity (west wall)
+box(MBaX + 0.3, 0, MBaZ + 0.4, 6.5, 0.9, 1.4, M.cabinet);
+box(MBaX + 0.3, 0.9, MBaZ + 0.4, 6.5, 0.07, 1.4, M.marble);
+// Two vessel sinks
+[MBaX + 1.0, MBaX + 4.5].forEach(sx => {
+  box(sx, 0.9, MBaZ + 0.55, 1.5, 0.14, 1.1,
+    new THREE.MeshStandardMaterial({color:0xf4f0ec, roughness:0.1, metalness:0.05}));
+  // Faucet
+  box(sx + 0.65, 0.9, MBaZ + 0.5, 0.06, 0.5, 0.06, M.chrome);
+  box(sx + 0.58, 1.35, MBaZ + 0.45, 0.2, 0.05, 0.22, M.chrome);
+});
+// Mirror / medicine cabinet
+box(MBaX + 0.2, 0.9, MBaZ + 0.2, 6.6, 3.6, 0.07, M.glass);
+
+// Freestanding bathtub (east area)
+box(MBaX + MBaW - 6.5, 0, MBaZ + 0.4, 5.5, 0.7, 2.8,
+  new THREE.MeshStandardMaterial({color:0xeee9e2, roughness:0.12, metalness:0.04}));
+box(MBaX + MBaW - 6.3, 0.48, MBaZ + 0.55, 5.1, 0.28, 2.5,
+  new THREE.MeshStandardMaterial({color:0xfaf8f5, roughness:0.06}));
+// Tub faucet
+box(MBaX + MBaW - 3.3, 0.7, MBaZ + 0.36, 0.06, 0.6, 0.06, M.chrome);
+
+// Walk-in shower enclosure
+box(MBaX + 7.0, 0, MBaZ + 0.35, 5.5, WH - 1.5, 5.8, M.glassDoor, true, true);
+// Shower walls (solid)
+box(MBaX + 7.0,  0, MBaZ + 0.35, 0.07, WH-1.5, 5.8, M.tile);
+box(MBaX + 12.4, 0, MBaZ + 0.35, 0.07, WH-1.5, 5.8, M.tile);
+box(MBaX + 7.0,  0, MBaZ + 6.1,  5.5,  WH-1.5, 0.07, M.tile);
+slab(MBaX + 7.0, MBaZ + 0.35, 5.5, 5.8, M.tile, 0.12);
+// Shower head
+box(MBaX + 12.3, 7.5, MBaZ + 3.0, 0.06, 0.4, 0.06, M.chrome);
+box(MBaX + 12.1, 7.8, MBaZ + 2.6, 0.45, 0.06, 0.8, M.chrome);
+
+// Toilet (behind door)
+box(MBaX + 0.4, 0, MBaZ + MBaD - 2.5, 1.6, 0.42, 2.0,
+  new THREE.MeshStandardMaterial({color:0xf5f2ee, roughness:0.22}));
+box(MBaX + 0.4, 0.42, MBaZ + MBaD - 2.5, 1.6, 0.14, 2.0,
+  new THREE.MeshStandardMaterial({color:0xf5f2ee, roughness:0.22}));
+box(MBaX + 0.4, 0.56, MBaZ + MBaD - 2.52, 1.6, 0.65, 0.7,
+  new THREE.MeshStandardMaterial({color:0xf5f2ee, roughness:0.22}));
+
+// ── WALK-IN CLOSET ────────────────────────────────────────────────────────────
+const WCX = X_HR, WCZ = Z_MTS;
+const WCW = 9.5, WCD = Z_WCS - Z_MTS;
+
+// Built-in closet system
+// Left run
+box(WCX + 0.3, 0, WCZ + 0.4, 1.0, 6.5, WCD - 0.8, M.cabinet);
+// Right run
+box(WCX + WCW - 1.3, 0, WCZ + 0.4, 1.0, 6.5, WCD - 0.8, M.cabinet);
+// Back wall (south)
+box(WCX + 0.3, 0, WCZ + WCD - 1.2, WCW - 0.6, 6.5, 1.0, M.cabinet);
+// Center island
+box(WCX + 2.5, 0, WCZ + 1.5, 4.0, 0.9, WCD - 3.2, M.cabinet);
+box(WCX + 2.4, 0.9, WCZ + 1.4, 4.2, 0.07, WCD - 3.0, M.marble);
+// Closet rod (chrome rod suggestion)
+box(WCX + 0.32, 4.2, WCZ + 0.4, 0.95, 0.06, WCD - 0.85, M.chrome);
+box(WCX + WCW - 1.28, 4.2, WCZ + 0.4, 0.95, 0.06, WCD - 0.85, M.chrome);
+
+// ── GARAGE ────────────────────────────────────────────────────────────────────
+const GGX = 15.0, GGZ = Z_WCS;
+const GGW = 13.0, GGD = Z47 - Z_WCS;
+
+// Car (centered in garage bay)
+// Lower body
+box(GGX + 1.0, 0, GGZ + 1.0, 10, 1.5, 5.0, M.carBody);
+// Upper cabin
+const cabGeo = new THREE.BoxGeometry(7.0, 1.9, 4.5);
+const cab = new THREE.Mesh(cabGeo, M.carBody);
+cab.position.set(GGX + 5.2, 2.2, GGZ + 3.5);
+cab.castShadow = true; scene.add(cab);
+// Windscreen + windows
+box(GGX + 2.5, 1.5, GGZ + 1.05, 4.5, 1.8, 0.07, M.glassDoor);
+box(GGX + 2.5, 1.5, GGZ + 5.98, 4.5, 1.8, 0.07, M.glassDoor);
+// Side windows
+box(GGX + 1.0, 1.5, GGZ + 1.2, 0.07, 1.6, 4.6, M.glassDoor);
+box(GGX + 10.9, 1.5, GGZ + 1.2, 0.07, 1.6, 4.6, M.glassDoor);
+// Wheels
+const wGeo = new THREE.CylinderGeometry(0.7, 0.7, 0.5, 24);
+const wMat = new THREE.MeshStandardMaterial({color:0x181412, roughness:0.85});
+[[GGX+2.2, GGZ+0.9],[GGX+8.8, GGZ+0.9],[GGX+2.2, GGZ+6.1],[GGX+8.8, GGZ+6.1]].forEach(([wx,wz]) => {
+  const wm = new THREE.Mesh(wGeo, wMat);
+  wm.rotation.z = Math.PI/2; wm.position.set(wx, 0.7, wz);
+  wm.castShadow = true; scene.add(wm);
+  // Hubcap
+  cyl(wx, 0.7, wz, 0.45, 0.45, 0.52, 16, M.chrome);
+});
+
+// Garage wall shelving / storage
+box(GGX + GGW - 1.0, 0, GGZ + 0.5, 0.9, 5.0, GGD - 1.0, M.cabinet);
+
+// ── COVERED PORCH ────────────────────────────────────────────────────────────
+const PX = X0, PZ = Z47, PW = 15.0, PD = 6.0;
+// Columns (round)
+[[1.2, PZ+0.5],[7.3, PZ+0.5],[13.0, PZ+0.5],
+ [1.2, PZ+5.5],[7.3, PZ+5.5],[13.0, PZ+5.5]].forEach(([cx,cz]) =>
+  cyl(cx, 0, cz, 0.22, 0.22, WH, 16, M.wallExt)
+);
+// Porch ceiling beam
+box(PX + 0.5, WH, PZ + 0.3, PW - 1.0, 0.35, PD - 0.6, M.trim);
+// Porch beams (longitudinal)
+for (let i = 0; i < 3; i++) {
+  box(PX + i*6.5, WH - 0.3, PZ + 0.3, 0.25, 0.3, PD - 0.6, M.trim);
+}
+// Outdoor sofa
+box(PX + 1.5, 0, PZ + 1.0, 4.5, 0.75, 2.0, M.sofaAccent);
+box(PX + 1.5, 0.75, PZ + 2.75, 4.5, 0.85, 0.25, M.sofaAccent);
+// Outdoor coffee table
+box(PX + 3.0, 0, PZ + 3.5, 2.5, 0.42, 1.4, M.wood);
+box(PX + 2.9, 0.42, PZ + 3.4, 2.7, 0.06, 1.6, M.glass);
+// Potted plants
+[[0.5, PZ+0.6],[13.8, PZ+0.6],[0.5, PZ+5.2],[13.8, PZ+5.2]].forEach(([px,pz]) => {
+  cyl(px, 0, pz, 0.32, 0.25, 0.55, 12,
+    new THREE.MeshStandardMaterial({color:0x7a5030, roughness:0.88}));
+  const lg = new THREE.SphereGeometry(0.58, 8, 6);
+  const lm = new THREE.Mesh(lg, M.grass);
+  lm.position.set(px, 0.9, pz); lm.castShadow=true; scene.add(lm);
+});
+
+// ── PATIO ─────────────────────────────────────────────────────────────────────
+const PTX = X_HR, PTZ = -7;
+const PTW = X28 - X_HR, PTD = 7;
+
+// Low wall / railing
+box(PTX, 0, PTZ, PTW, 1.1, WT, M.wallExt);
+box(PTX, 0, PTZ, WT, 1.1, PTD, M.wallExt);
+box(X28 - WT, 0, PTZ, WT, 1.1, PTD, M.wallExt);
+
+// Outdoor dining table
+box(PTX + 1.5, 0, PTZ + 0.8, 6.0, 0.76, 3.0, M.wood);
+box(PTX + 1.3, 0.76, PTZ + 0.6, 6.4, 0.07, 3.4, M.glass);
+// Table legs
+[[PTX+1.7, PTZ+1.0],[PTX+7.2, PTZ+1.0],[PTX+1.7, PTZ+3.6],[PTX+7.2, PTZ+3.6]].forEach(([lx,lz]) =>
+  box(lx, 0, lz, 0.1, 0.76, 0.1, M.metal)
+);
+// Chairs (4)
+[[PTX+0.5, PTZ+1.0],[PTX+8.0, PTZ+1.0],[PTX+0.5, PTZ+3.0],[PTX+8.0, PTZ+3.0]].forEach(([cx,cz]) => {
+  box(cx - 0.45, 0, cz - 0.45, 0.9, 0.9, 0.9, M.metal);
+  box(cx - 0.48, 0.9, cz + 0.4, 0.96, 1.2, 0.09, M.metal);
+});
+// Umbrella
+cyl(PTX + 4.5, 0, PTZ + 2.0, 0.06, 0.06, 8.0, 8, M.metal);
+const umbGeo = new THREE.ConeGeometry(3.5, 1.2, 16, 1, true);
+const umb = new THREE.Mesh(umbGeo, new THREE.MeshStandardMaterial({color:0xd4c8b0, roughness:0.85, side:THREE.DoubleSide}));
+umb.position.set(PTX + 4.5, 7.0, PTZ + 2.0); umb.castShadow=true; scene.add(umb);
+
+// Patio plants
+[[PTX+10.5, PTZ+0.6],[PTX+10.5, PTZ+6.0],[PTX+0.6, PTZ+5.5]].forEach(([px,pz]) => {
+  cyl(px, 0, pz, 0.35, 0.28, 0.6, 12,
+    new THREE.MeshStandardMaterial({color:0x7a5030, roughness:0.88}));
+  const lg2 = new THREE.SphereGeometry(0.65, 8, 6);
+  const lm2 = new THREE.Mesh(lg2, M.grass);
+  lm2.position.set(px, 1.1, pz); lm2.castShadow=true; scene.add(lm2);
+});
+
+// ── RESIZE ────────────────────────────────────────────────────────────────────
+window.addEventListener('resize', () => {
+  const w = window.innerWidth, h = window.innerHeight;
+  const ar2 = w / h;
+  camera.left = -FS * ar2; camera.right = FS * ar2;
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, h);
+});
+
+// ── ANIMATE ───────────────────────────────────────────────────────────────────
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+</script>
+</body>
+</html>
